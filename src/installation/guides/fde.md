@@ -71,50 +71,23 @@ Enter passphrase:
 Verify passphrase:
 ```
 
-Once the volume is created, it needs to be opened. Replace `voidvm` with an
-appropriate name. Again, this will be `/dev/sda2` on EFI systems.
+Once the volume is created, it needs to be opened. Again, this will be `/dev/sda2` on EFI systems.
 
 ```
-# cryptsetup luksOpen /dev/sda1 voidvm
+# cryptsetup luksOpen /dev/sda1 voidlx
 Enter passphrase for /dev/sda1:
 ```
 
-Once the LUKS container is opened, create the LVM volume group using that
-partition.
+Once the LUKS container is opened, create the filesystems and a swapfile. The example below uses EXT4. Any filesystem [supported by
+GRUB](https://www.gnu.org/software/grub/manual/grub/grub.html#Features) will work.
 
 ```
-# vgcreate voidvm /dev/mapper/voidvm
-  Volume group "voidvm" successfully created
-```
+# mkfs.ext4 -L voidlinux /dev/dm-0
+# mount /dev/dm-0 /mnt
+# dd if=/dev/random of=/mnt/.swapfile bs=1M count=2048 status=progress
+# chmod 0600 /mnt/.swapfile
+# mkswap -L swapfile /mnt/.swapfile
 
-There should now be an empty volume group named `voidvm`.
-
-Next, logical volumes need to be created for the volume group. For this example,
-I chose 10G for `/`, 2G for `swap`, and will assign the rest to `/home`.
-
-```
-# lvcreate --name root -L 10G voidvm
-  Logical volume "root" created.
-# lvcreate --name swap -L 2G voidvm
-  Logical volume "swap" created.
-# lvcreate --name home -l 100%FREE voidvm
-  Logical volume "home" created.
-```
-
-Next, create the filesystems. The example below uses XFS as a personal
-preference of the author. Any filesystem [supported by
-GRUB](https://www.gnu.org/software/grub/manual/grub/grub.html#Features) will
-work.
-
-```
-# mkfs.xfs -L root /dev/voidvm/root
-meta-data=/dev/voidvm/root       isize=512    agcount=4, agsize=655360 blks
-...
-# mkfs.xfs -L home /dev/voidvm/home
-meta-data=/dev/voidvm/home       isize=512    agcount=4, agsize=2359040 blks
-...
-# mkswap /dev/voidvm/swap
-Setting up swapspace version 1, size = 2 GiB (2147479552 bytes)
 ```
 
 ## System installation
@@ -122,9 +95,7 @@ Setting up swapspace version 1, size = 2 GiB (2147479552 bytes)
 Next, setup the chroot and install the base system.
 
 ```
-# mount /dev/voidvm/root /mnt
-# mkdir -p /mnt/home
-# mount /dev/voidvm/home /mnt/home
+# mkdir /mnt/home
 ```
 
 On a UEFI system, the EFI system partition also needs to be mounted.
@@ -148,7 +119,7 @@ URL](../../xbps/repositories/index.md#the-main-repository) for the type of
 system you wish to install.
 
 ```
-# xbps-install -Sy -R https://repo-default.voidlinux.org/current -r /mnt base-system lvm2 cryptsetup grub
+# xbps-install -Sy -R https://repo-default.voidlinux.org/current -r /mnt base-system cryptsetup grub
 [*] Updating `https://repo-default.voidlinux.org/current/x86_64-repodata' ...
 x86_64-repodata: 1661KB [avg rate: 2257KB/s]
 130 packages will be downloaded:
@@ -159,7 +130,7 @@ UEFI systems will have a slightly different package selection. The installation
 command for a UEFI system will be as follows.
 
 ```
-# xbps-install -Sy -R https://repo-default.voidlinux.org/current -r /mnt base-system cryptsetup grub-x86_64-efi lvm2
+# xbps-install -Sy -R https://repo-default.voidlinux.org/current -r /mnt base-system cryptsetup grub-x86_64-efi
 ```
 
 When it's done, we can enter the chroot with
@@ -169,10 +140,9 @@ manually](../../config/containers-and-vms/chroot.md#manual-method).
 
 ```
 # xchroot /mnt
-[xchroot /mnt] # chown root:root /
-[xchroot /mnt] # chmod 755 /
+[xchroot /mnt] # chmod 0755 /
 [xchroot /mnt] # passwd root
-[xchroot /mnt] # echo voidvm > /etc/hostname
+[xchroot /mnt] # echo voidlinux > /etc/hostname
 ```
 
 and, for glibc systems only:
@@ -190,44 +160,19 @@ and named your filesystems. For this example, the file should look like this:
 
 ```
 # <file system>   <dir> <type>  <options>             <dump>  <pass>
+/dev/dm-0         /     ext4    defaults,relatime     0       1
 tmpfs             /tmp  tmpfs   defaults,nosuid,nodev 0       0
-/dev/voidvm/root  /     xfs     defaults              0       0
-/dev/voidvm/home  /home xfs     defaults              0       0
-/dev/voidvm/swap  swap  swap    defaults              0       0
+/.swapfile        swap  swap    rw,relatime,discard   0       0
 ```
 
 UEFI systems will also have an entry for the EFI system partition.
 
 ```
-/dev/sda1	/boot/efi	vfat	defaults	0	0
+/dev/sda1	        /boot/efi	vfat defaults	            0	      0
 ```
-
-### GRUB configuration
-
-Next, configure GRUB to be able to unlock the filesystem. Add the following line
-to `/etc/default/grub`:
-
-```
-GRUB_ENABLE_CRYPTODISK=y
-```
-
-Next, the kernel needs to be configured to find the encrypted device. First,
-find the UUID of the device.
-
-```
-[xchroot /mnt] # blkid -o value -s UUID /dev/sda1
-135f3c06-26a0-437f-a05e-287b036440a4
-```
-
-Edit the `GRUB_CMDLINE_LINUX_DEFAULT=` line in `/etc/default/grub` and add
-`rd.lvm.vg=voidvm rd.luks.uuid=<UUID>` to it. Make sure the UUID matches the one
-for the `sda1` device found in the output of the
-[blkid(8)](https://man.voidlinux.org/blkid.8) command above. This will be
-`/dev/sda2` on EFI systems.
-
 ## LUKS key setup
 
-And now to avoid having to enter the password twice on boot, a key will be
+To avoid having to enter the password twice on boot, a keyfile will be
 configured to automatically unlock the encrypted volume on boot. First, generate
 a random key.
 
@@ -248,35 +193,51 @@ Enter any existing passphrase:
 Change the permissions to protect the generated key.
 
 ```
-[xchroot /mnt] # chmod 000 /boot/volume.key
-[xchroot /mnt] # chmod -R g-rwx,o-rwx /boot
+[xchroot /mnt] # chmod 0400 /boot/volume.key
 ```
 
-This keyfile also needs to be added to `/etc/crypttab`. Again, this will be
-`/dev/sda2` on EFI systems.
-
-```
-voidvm   /dev/sda1   /boot/volume.key   luks
-```
-
-And then the keyfile and `crypttab` need to be included in the initramfs. Create
+The keyfile need to be included in the initramfs. Create
 a new file at `/etc/dracut.conf.d/10-crypt.conf` with the following line:
 
 ```
-install_items+=" /boot/volume.key /etc/crypttab "
+install_items+=" /boot/volume.key "
 ```
+
+### GRUB configuration
+
+Next, configure GRUB to be able to unlock the filesystem. Add the following line
+to `/etc/default/grub`:
+
+```
+GRUB_ENABLE_CRYPTODISK=y
+```
+
+The kernel needs to be configured to find the encrypted device. First,
+find the UUID of the device.
+
+```
+[xchroot /mnt] # blkid -o value -s UUID /dev/sda1
+135f3c06-26a0-437f-a05e-287b036440a4
+```
+
+Edit the `GRUB_CMDLINE_LINUX_DEFAULT=` line and the `GRUB_CMDLINE_LINUX` line in `/etc/default/grub` and add/change
+
+GRUB_CMDLINE_LINUX_DEFAULT="cryptdevice=UUID=135f3c06-26a0-437f-a05e-287b036440a4:voidlx cryptkey=rootfs:/boot/volume.key rd.luks.key=/boot/volume.key:/ rw"
+(It works like this for both initrd systems dracut and mkinitcpio)
+
+GRUB_CMDLINE_LINUX="rd.auto=1 loglevel=4"
+
+Make sure the UUID matches the one for the `sda1` device found in the output of the
+[blkid(8)](https://man.voidlinux.org/blkid.8) command above. This will be
+`/dev/sda2` on EFI systems. You don't need to specify the root file system, grub will take care about it.
+
 
 ## Complete system installation
 
-Next, install the boot loader to the disk.
+Next, install the boot loader to the disk. And generate a fresh initramfs with the keyfile.
 
 ```
 [xchroot /mnt] # grub-install /dev/sda
-```
-
-Ensure an initramfs is generated:
-
-```
 [xchroot /mnt] # xbps-reconfigure -fa
 ```
 
