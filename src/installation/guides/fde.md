@@ -75,46 +75,15 @@ Once the volume is created, it needs to be opened. Replace `voidvm` with an
 appropriate name. Again, this will be `/dev/sda2` on EFI systems.
 
 ```
-# cryptsetup luksOpen /dev/sda1 voidvm
+# cryptsetup luksOpen /dev/sda1 voidlx
 Enter passphrase for /dev/sda1:
 ```
 
-Once the LUKS container is opened, create the LVM volume group using that
-partition.
+Once the LUKS container is opened, create the filesystems. The example below uses EXT4. Any filesystem [supported by
+GRUB](https://www.gnu.org/software/grub/manual/grub/grub.html#Features) will work.
 
 ```
-# vgcreate voidvm /dev/mapper/voidvm
-  Volume group "voidvm" successfully created
-```
-
-There should now be an empty volume group named `voidvm`.
-
-Next, logical volumes need to be created for the volume group. For this example,
-I chose 10G for `/`, 2G for `swap`, and will assign the rest to `/home`.
-
-```
-# lvcreate --name root -L 10G voidvm
-  Logical volume "root" created.
-# lvcreate --name swap -L 2G voidvm
-  Logical volume "swap" created.
-# lvcreate --name home -l 100%FREE voidvm
-  Logical volume "home" created.
-```
-
-Next, create the filesystems. The example below uses XFS as a personal
-preference of the author. Any filesystem [supported by
-GRUB](https://www.gnu.org/software/grub/manual/grub/grub.html#Features) will
-work.
-
-```
-# mkfs.xfs -L root /dev/voidvm/root
-meta-data=/dev/voidvm/root       isize=512    agcount=4, agsize=655360 blks
-...
-# mkfs.xfs -L home /dev/voidvm/home
-meta-data=/dev/voidvm/home       isize=512    agcount=4, agsize=2359040 blks
-...
-# mkswap /dev/voidvm/swap
-Setting up swapspace version 1, size = 2 GiB (2147479552 bytes)
+# mkfs.ext4 -L voidlinux /dev/dm-0
 ```
 
 ## System installation
